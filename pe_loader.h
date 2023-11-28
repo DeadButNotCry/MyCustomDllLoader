@@ -24,7 +24,7 @@ BOOL load_sections(HANDLE file_h,
                    long lfanew,
                    LPVOID *section_base, PIMAGE_SECTION_HEADER sections);
 HANDLE read_pe(char *filename);
-PIMAGE_NT_HEADERS get_nt_headers(HANDLE *file_h, long lfanew);
+PIMAGE_NT_HEADERS get_nt_headers(HANDLE file_h, long lfanew);
 BOOL make_relocations(PIMAGE_NT_HEADERS pimage_nt_h, LPVOID image_base);
 DWORD get_section_protection(DWORD sc);
 BOOL process_import(LPVOID image_base, PIMAGE_NT_HEADERS pimage_nt_h);

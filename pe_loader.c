@@ -59,6 +59,13 @@ void *LoadPe(char *filename) {
     printf("Cannot make relocations\n");
     return NULL;
   }
+
+  temp_res = process_import(image_base, pimage_nt_h);
+  if (!temp_res) {
+    printf("Cannot import libs.\n");
+    return NULL;
+  }
+
   for (WORD i = 0; i < pimage_nt_h->FileHeader.NumberOfSections; i++) {
     DWORD old_protect;
     temp_res = VirtualProtect(image_base + sections[i].VirtualAddress,
@@ -69,17 +76,16 @@ void *LoadPe(char *filename) {
       return NULL;
     }
 
-    temp_res = process_import(image_base, pimage_nt_h);
-    if (!temp_res) {
-      printf("Cannot import libs.\n");
-      return NULL;
-    }
   }
 
   return NULL;
 }
 
 long get_lfanew(HANDLE file_h) {
+  if (file_h == NULL) {
+    return -1;
+  }
+
   IMAGE_DOS_HEADER dos_header;
   DWORD n_read;
   BOOL readfile_res;
@@ -100,6 +106,9 @@ long get_lfanew(HANDLE file_h) {
 }
 
 HANDLE read_pe(char *filename) {
+  if (filename == NULL) {
+    return INVALID_HANDLE_VALUE;
+  }
   HANDLE file_h = CreateFileA(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
   DWORD error = GetLastError();
   if (error == 0 && file_h != INVALID_HANDLE_VALUE) {
@@ -110,7 +119,8 @@ HANDLE read_pe(char *filename) {
   }
 }
 
-PIMAGE_NT_HEADERS get_nt_headers(HANDLE *file_h, long lfanew) {
+PIMAGE_NT_HEADERS get_nt_headers(HANDLE file_h, long lfanew) {
+
   PIMAGE_NT_HEADERS
       res = (PIMAGE_NT_HEADERS) VirtualAlloc(NULL, sizeof(IMAGE_NT_HEADERS), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
   BOOL readheader_res;
@@ -262,29 +272,36 @@ BOOL process_import(LPVOID image_base, PIMAGE_NT_HEADERS pimage_nt_h) {
   if (data_dir.VirtualAddress == 0) {
     return TRUE;
   }
-  PIMAGE_IMPORT_DESCRIPTOR pimport_desc = (PIMAGE_IMPORT_DESCRIPTOR) ((DWORD) image_base + data_dir.VirtualAddress);
+  PIMAGE_IMPORT_DESCRIPTOR pimport_desc = image_base + data_dir.VirtualAddress;
+  printf("Cannot load lib.\n");
 
   while (pimport_desc->Name != 0) {
-    PCHAR plib_name = (PCHAR) (image_base + pimport_desc->Name);
+    PCHAR plib_name = image_base + pimport_desc->Name;
     HMODULE hm = LoadLibraryA(plib_name);
     if (hm == NULL) {
-      printf("Cannot load lib.\n");
+      printf("Cannot load lib. Error %lu\n", GetLastError());
       return FALSE;
     }
-    PIMAGE_THUNK_DATA orig_first_thunk = (PIMAGE_THUNK_DATA) (image_base + pimport_desc->OriginalFirstThunk);
-    PIMAGE_THUNK_DATA first_thunk = (PIMAGE_THUNK_DATA) (image_base + pimport_desc->FirstThunk);
+    printf("Loaded: %s  \n", plib_name);
 
-    for (DWORD i = 0; orig_first_thunk[i].u1.AddressOfData; i++) {
+    PIMAGE_THUNK_DATA orig_first_thunk = (image_base + pimport_desc->OriginalFirstThunk);
+    PIMAGE_THUNK_DATA first_thunk = (image_base + pimport_desc->FirstThunk);
+
+    for (DWORD i = 0; orig_first_thunk[i].u1.AddressOfData != 0; i++) {
       PIMAGE_IMPORT_BY_NAME by_name;
-      PCHAR search_value;
+      LPCSTR search_value;
 
       if (orig_first_thunk[i].u1.Ordinal & IMAGE_ORDINAL_FLAG) {
         search_value = (PCHAR) IMAGE_ORDINAL(orig_first_thunk[i].u1.Ordinal);
       } else {
-        by_name = (PIMAGE_IMPORT_BY_NAME) (image_base + first_thunk->u1.AddressOfData);
-        search_value = (PCHAR) by_name->Name;
+        by_name = image_base + first_thunk[i].u1.AddressOfData;
+        search_value = (LPCSTR) by_name->Name;
       }
-      first_thunk->u1.Function = (LONGLONG) GetProcAddress(hm, search_value);
+
+      printf("\tFunction name: %s\n", search_value);
+      DWORD ptr = (LONGLONG) GetProcAddress(hm, search_value);
+
+      first_thunk->u1.Function = ptr;
       if (first_thunk->u1.Function == 0) {
         FreeLibrary(hm);
         return FALSE;
@@ -296,8 +313,12 @@ BOOL process_import(LPVOID image_base, PIMAGE_NT_HEADERS pimage_nt_h) {
 }
 
 BOOL process_export(LPVOID image_base, PIMAGE_NT_HEADERS pimage_nt_h) {
+  if (image_base == NULL || pimage_nt_h == NULL) {
+    return FALSE;
+  }
   IMAGE_DATA_DIRECTORY data_dir = pimage_nt_h->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-  PIMAGE_EXPORT_DIRECTORY pexport_dir = (PIMAGE_EXPORT_DIRECTORY) ((DWORD) image_base + data_dir.VirtualAddress);
-  DWORD address_of_func = (DWORD) image_base + pexport_dir->AddressOfFunctions;
-
+  PIMAGE_EXPORT_DIRECTORY pexport_dir = (PIMAGE_EXPORT_DIRECTORY) (image_base + data_dir.VirtualAddress);
+  if (data_dir.Size == 0 || data_dir.VirtualAddress == 0) {
+    return TRUE;
+  }
 }
